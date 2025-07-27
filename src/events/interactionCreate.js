@@ -1,4 +1,6 @@
 const getSheetsClient = require('../services/googleSheets');
+const { EmbedBuilder } = require('discord.js');
+const pendingRequests = require('../utils/pendingRequests');
 
 module.exports = {
     name: 'interactionCreate',
@@ -78,6 +80,207 @@ module.exports = {
                     return;
                 }
             }
+            return;
+        }
+
+        // Handle autocomplete for /price and /inventoryupdate commands
+        if (interaction.isAutocomplete()) {
+            try {
+                let items = [];
+                if (interaction.commandName === 'price' || interaction.commandName === 'inventoryupdate') {
+                    const focusedOption = interaction.options.getFocused(true);
+                    const type = interaction.options.getString('type');
+                    const sheets = await getSheetsClient();
+                    const itemsRes = await sheets.spreadsheets.values.get({
+                        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+                        range: 'Data!A2:B',
+                    });
+                    let rows = itemsRes.data.values || [];
+                    if (interaction.commandName === 'inventoryupdate' && type) {
+                        rows = rows.filter(row => row[0] === type);
+                    }
+                    items = [...new Set(rows.map(row => row[1]))].sort();
+                    const input = focusedOption.value?.toLowerCase() || '';
+                    const filtered = items.filter(item =>
+                        item.toLowerCase().includes(input)
+                    );
+                    await interaction.respond(
+                        filtered.slice(0, 25).map(item => ({
+                            name: item,
+                            value: item
+                        }))
+                    );
+                    return;
+                }
+                // If commandName doesn't match, just respond with empty
+                await interaction.respond([]);
+                return;
+            } catch (err) {
+                console.error('Autocomplete error:', err);
+                try { await interaction.respond([]); } catch {}
+                return;
+            }
+        }
+
+        // Handle button interactions for inventory updates
+        if (interaction.isButton()) {
+            const [action, updateNumber] = interaction.customId.split(':');
+            console.log('Pending get:', updateNumber, pendingRequests.has(Number(updateNumber)));
+            const data = pendingRequests.get(Number(updateNumber));
+            if (!data) {
+                return await interaction.reply({ content: '❌ This update is no longer pending.', ephemeral: true });
+            }
+
+            // Permission check
+            if (!interaction.member.roles.cache.has(process.env.INVENTORY_MANAGER_ROLE_ID)) {
+                return await interaction.reply({ content: '❌ Only inventory managers can approve or deny.', ephemeral: true });
+            }
+
+            if (action === 'approve_invupdate') {
+                try {
+                    const sheets = await getSheetsClient();
+
+                    // Example: Find the row for the item and update stock/balance
+                    const itemsRes = await sheets.spreadsheets.values.get({
+                        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+                        range: 'Data!A2:D',
+                    });
+                    const rows = itemsRes.data.values || [];
+                    const rowIndex = rows.findIndex(row => row[0] === data.type && row[1] === data.item);
+
+                    if (rowIndex === -1) {
+                        return await interaction.update({
+                            content: '❌ Item not found in inventory.',
+                            embeds: [],
+                            components: []
+                        });
+                    }
+
+                    // Get current stock and balance
+                    const currentStock = parseInt(rows[rowIndex][2], 10);
+                    const balanceRes = await sheets.spreadsheets.values.get({
+                        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+                        range: 'Data!J2',
+                    });
+                    let currentBalance = 0;
+                    const balanceRaw = balanceRes.data.values?.[0]?.[0];
+                    if (balanceRaw && !isNaN(Number(balanceRaw))) {
+                        currentBalance = parseFloat(balanceRaw);
+                    }
+
+                    // Calculate new stock and balance
+                    let newStock = currentStock;
+                    let newBalance = currentBalance;
+                    if (data.saleType === 'Sold') {
+                        newStock -= data.quantity;
+                        newBalance += data.amount;
+                    } else {
+                        newStock += data.quantity;
+                        newBalance -= data.amount;
+                    }
+
+                    if (newStock < 0) {
+                        return await interaction.update({
+                            content: '❌ Not enough stock for this transaction.',
+                            embeds: [],
+                            components: []
+                        });
+                    }
+                    if (newBalance < 0) {
+                        return await interaction.update({
+                            content: '❌ Not enough balance for this transaction.',
+                            embeds: [],
+                            components: []
+                        });
+                    }
+
+                    // Update stock and balance in the sheet
+                    const itemRowNumber = rowIndex + 2;
+                    await Promise.all([
+                        sheets.spreadsheets.values.update({
+                            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+                            range: `Data!C${itemRowNumber}`,
+                            valueInputOption: 'USER_ENTERED',
+                            resource: { values: [[newStock]] },
+                        }),
+                        sheets.spreadsheets.values.update({
+                            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+                            range: 'Data!J2',
+                            valueInputOption: 'USER_ENTERED',
+                            resource: { values: [[newBalance]] },
+                        })
+                    ]);
+
+                    // Update the embed as before
+                    const embed = EmbedBuilder.from(interaction.message.embeds[0])
+                        .setColor(0x00ff00)
+                        .addFields({ name: '\u200B', value: `✅ **Approved by:** <@${interaction.user.id}>` });
+                    await interaction.update({ embeds: [embed], components: [] });
+                } catch (err) {
+                    console.error('Google Sheets update error:', err);
+                    await interaction.reply({ content: '❌ Failed to update Google Sheets.', ephemeral: true });
+                }
+            } else if (action === 'deny_invupdate') {
+                const embed = EmbedBuilder.from(interaction.message.embeds[0])
+                    .setColor(0xff0000)
+                    .addFields({ name: '\u200B', value: `❌ **Denied by:** <@${interaction.user.id}>` });
+                await interaction.update({ embeds: [embed], components: [] });
+            } else if (action === 'approve_bankupdate') {
+                try {
+                    const sheets = await getSheetsClient();
+                    // Get current balance
+                    const balanceRes = await sheets.spreadsheets.values.get({
+                        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+                        range: 'Data!J2',
+                    });
+                    let currentBalance = 0;
+                    const balanceRaw = balanceRes.data.values?.[0]?.[0];
+                    if (balanceRaw && !isNaN(Number(balanceRaw))) {
+                        currentBalance = parseFloat(balanceRaw);
+                    }
+
+                    // Calculate new balance
+                    let newBalance = currentBalance;
+                    if (data.direction === 'In') {
+                        newBalance += data.amount;
+                    } else {
+                        newBalance -= data.amount;
+                    }
+
+                    if (newBalance < 0) {
+                        return await interaction.update({
+                            content: '❌ Not enough balance for this transaction.',
+                            embeds: [],
+                            components: []
+                        });
+                    }
+
+                    // Update balance in the sheet
+                    await sheets.spreadsheets.values.update({
+                        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+                        range: 'Data!J2',
+                        valueInputOption: 'USER_ENTERED',
+                        resource: { values: [[newBalance]] },
+                    });
+
+                    // Update the embed
+                    const embed = EmbedBuilder.from(interaction.message.embeds[0])
+                        .setColor(0x00ff00)
+                        .addFields({ name: '\u200B', value: `✅ **Approved by:** <@${interaction.user.id}>` });
+                    await interaction.update({ embeds: [embed], components: [] });
+                } catch (err) {
+                    console.error('Google Sheets update error:', err);
+                    await interaction.reply({ content: '❌ Failed to update Google Sheets.', ephemeral: true });
+                }
+            } else if (action === 'deny_bankupdate') {
+                const embed = EmbedBuilder.from(interaction.message.embeds[0])
+                    .setColor(0xff0000)
+                    .addFields({ name: '\u200B', value: `❌ **Denied by:** <@${interaction.user.id}>` });
+                await interaction.update({ embeds: [embed], components: [] });
+            }
+
+            // Remove from pending
+            pendingRequests.delete(Number(updateNumber));
             return;
         }
 
