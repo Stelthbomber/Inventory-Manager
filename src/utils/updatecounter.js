@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const counterPath = path.join(__dirname, '../../updateCounter.json');
+const counterPath = path.join(__dirname, '../jsons/updateCounter.json');
 
 function getNextUpdateNumber() {
     let counter = { current: 1 };
