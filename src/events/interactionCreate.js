@@ -5,124 +5,23 @@ const pendingRequests = require('../utils/pendingRequests');
 module.exports = {
     name: 'interactionCreate',
     async execute(interaction, client) {
-        // Autocomplete for /price command
-        if (interaction.isAutocomplete() && interaction.commandName === 'price') {
-            const focusedOption = interaction.options.getFocused(true);
-
-            if (focusedOption.name === 'item') {
+        // Handle autocomplete for any command with an autocomplete method
+        if (interaction.isAutocomplete()) {
+            const command = client.commands.get(interaction.commandName);
+            if (command && typeof command.autocomplete === 'function') {
                 try {
-                    const sheets = await getSheetsClient();
-                    const itemsRes = await sheets.spreadsheets.values.get({
-                        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-                        range: 'Data!A2:B',
-                    });
-                    const rows = itemsRes.data.values || [];
-                    // Get unique item names, sorted
-                    const items = [...new Set(rows.map(row => row[1]))].sort();
-                    const input = focusedOption.value?.toLowerCase() || '';
-                    const filtered = items.filter(item =>
-                        item.toLowerCase().includes(input)
-                    );
-                    return await interaction.respond(
-                        filtered.slice(0, 25).map(item => ({
-                            name: item,
-                            value: item
-                        }))
-                    );
+                    await command.autocomplete(interaction, client);
                 } catch (err) {
                     console.error('Autocomplete error:', err);
                     try { await interaction.respond([]); } catch {}
-                    return;
                 }
-            }
-            return;
-        }
-
-        // Handle autocomplete for inventoryupdate
-        if (interaction.isAutocomplete() && interaction.commandName === 'inventoryupdate') {
-            const focusedOption = interaction.options.getFocused(true);
-            const type = interaction.options.getString('type');
-
-            if (focusedOption.name === 'item') {
-                try {
-                    const sheets = await getSheetsClient();
-                    const itemsRes = await sheets.spreadsheets.values.get({
-                        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-                        range: 'Data!A2:B',
-                    });
-                    let rows = itemsRes.data.values || [];
-                    // Filter by type if selected
-                    if (type) {
-                        rows = rows.filter(row => row[0] === type);
-                    }
-                    // Get unique item names, sorted
-                    const items = [...new Set(rows.map(row => row[1]))].sort();
-                    // Filter by what the user has typed so far
-                    const input = focusedOption.value?.toLowerCase() || '';
-                    const filtered = items.filter(item =>
-                        item.toLowerCase().includes(input)
-                    );
-                    // Only call respond ONCE
-                    return await interaction.respond(
-                        filtered.slice(0, 25).map(item => ({
-                            name: item,
-                            value: item
-                        }))
-                    );
-                } catch (err) {
-                    console.error('Autocomplete error:', err);
-                    // Only call respond ONCE, even on error
-                    try {
-                        await interaction.respond([]);
-                    } catch (e) {
-                        // Ignore, already acknowledged
-                    }
-                    return;
-                }
-            }
-            return;
-        }
-
-        // Handle autocomplete for /price and /inventoryupdate commands
-        if (interaction.isAutocomplete()) {
-            try {
-                let items = [];
-                if (interaction.commandName === 'price' || interaction.commandName === 'inventoryupdate') {
-                    const focusedOption = interaction.options.getFocused(true);
-                    const type = interaction.options.getString('type');
-                    const sheets = await getSheetsClient();
-                    const itemsRes = await sheets.spreadsheets.values.get({
-                        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-                        range: 'Data!A2:B',
-                    });
-                    let rows = itemsRes.data.values || [];
-                    if (interaction.commandName === 'inventoryupdate' && type) {
-                        rows = rows.filter(row => row[0] === type);
-                    }
-                    items = [...new Set(rows.map(row => row[1]))].sort();
-                    const input = focusedOption.value?.toLowerCase() || '';
-                    const filtered = items.filter(item =>
-                        item.toLowerCase().includes(input)
-                    );
-                    await interaction.respond(
-                        filtered.slice(0, 25).map(item => ({
-                            name: item,
-                            value: item
-                        }))
-                    );
-                    return;
-                }
-                // If commandName doesn't match, just respond with empty
-                await interaction.respond([]);
-                return;
-            } catch (err) {
-                console.error('Autocomplete error:', err);
+            } else {
                 try { await interaction.respond([]); } catch {}
-                return;
             }
+            return;
         }
 
-        // Handle button interactions for inventory updates
+        // Handle button interactions (keep your existing logic here)
         if (interaction.isButton()) {
             const [action, updateNumber] = interaction.customId.split(':');
             console.log('Pending get:', updateNumber, pendingRequests.has(Number(updateNumber)));
@@ -281,6 +180,42 @@ module.exports = {
 
             // Remove from pending
             pendingRequests.delete(Number(updateNumber));
+            return;
+        }
+
+        // Handle autocomplete for /removeitem command
+        if (interaction.isAutocomplete() && interaction.commandName === 'removeitem') {
+            const fs = require('fs');
+            const path = require('path');
+            const inventoryPath = path.join(__dirname, '../jsons/inventory.json');
+            let inventory = [];
+            if (fs.existsSync(inventoryPath)) {
+                inventory = JSON.parse(fs.readFileSync(inventoryPath, 'utf8'));
+            }
+            const focusedOption = interaction.options.getFocused(true);
+
+            if (focusedOption.name === 'type') {
+                // Suggest unique types
+                const types = [...new Set(inventory.map(item => item.type))];
+                const filtered = types.filter(type =>
+                    type.toLowerCase().includes(focusedOption.value.toLowerCase())
+                );
+                return await interaction.respond(
+                    filtered.slice(0, 25).map(type => ({ name: type, value: type }))
+                );
+            } else if (focusedOption.name === 'item') {
+                // Suggest items of the selected type
+                const selectedType = interaction.options.getString('type');
+                const items = inventory
+                    .filter(item => item.type === selectedType)
+                    .map(item => item.name);
+                const filtered = items.filter(name =>
+                    name.toLowerCase().includes(focusedOption.value.toLowerCase())
+                );
+                return await interaction.respond(
+                    filtered.slice(0, 25).map(name => ({ name, value: name }))
+                );
+            }
             return;
         }
 

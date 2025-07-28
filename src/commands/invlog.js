@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { getNextUpdateNumber } = require('../utils/updateCounter');
 const pendingRequests = require('../utils/pendingRequests');
+const getSheetsClient = require('../services/googleSheets');
+const { getItems } = require('../utils/itemCache');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -104,5 +106,36 @@ module.exports = {
         }
 
         await interaction.editReply(':white_check_mark: Update submitted for approval!');
+    },
+
+    async autocomplete(interaction) {
+        const focusedOption = interaction.options.getFocused(true);
+        if (focusedOption.name !== 'item') return;
+
+        const type = interaction.options.getString('type');
+        if (!type) {
+            await interaction.respond([]);
+            return;
+        }
+
+        try {
+            const items = await getItems(type);
+
+            let filtered;
+            if (!focusedOption.value) {
+                filtered = items;
+            } else {
+                filtered = items.filter(name =>
+                    name.toLowerCase().includes(focusedOption.value.toLowerCase())
+                );
+            }
+
+            await interaction.respond(
+                filtered.slice(0, 25).map(name => ({ name, value: name }))
+            );
+        } catch (err) {
+            console.error('Autocomplete error (invlog):', err);
+            await interaction.respond([]);
+        }
     },
 };
