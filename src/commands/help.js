@@ -64,6 +64,21 @@ module.exports = {
             {
                 name: '/help',
                 value: 'Lists all available bot commands and gives a quick explanation for each.'
+            },
+            {
+                name: '/leaderboard',
+                value: [
+                    'Show the current leaderboard of top sellers since the last reset.',
+                    '• `/leaderboard show` — View the leaderboard.',
+                    '• `/leaderboard reload` — Refresh the leaderboard channel (anyone can use).'
+                ].join('\n')
+            },
+            {
+                name: '/stats',
+                value: [
+                    'Check your (or another user\'s) all-time sales stats.',
+                    '• `/stats user:@username` — See a breakdown of items sold and total sales.'
+                ].join('\n')
             }
         ];
 
@@ -93,6 +108,14 @@ module.exports = {
                 name: 'Approvals',
                 value: [
                     'Supervisors can approve or deny inventory, bank, and bulk order requests.'
+                ].join('\n')
+            },
+            {
+                name: '/clear',
+                value: [
+                    'Clear leaderboard period totals or all-time sales for a user.',
+                    '• `/clear period` - Clear totals for the current period.',
+                    '• `/clear alltime` - Clear all-time sales data.'
                 ].join('\n')
             }
         ];

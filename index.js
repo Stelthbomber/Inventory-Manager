@@ -28,4 +28,14 @@ setInterval(() => {
     }
 }, 12 * 60 * 60 * 1000); // Every 12 hours
 
+const { postLeaderboard } = require('./src/jobs/leaderboardPoster');
+
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}`);
+    // Post leaderboard every hour
+    setInterval(() => postLeaderboard('1400077734985732136', client), 60 * 60 * 1000); // every hour
+    // Optionally, post once on startup
+    postLeaderboard('1400077734985732136', client);
+});
+
 client.login(process.env.DISCORD_TOKEN);

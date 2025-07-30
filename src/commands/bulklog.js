@@ -3,6 +3,7 @@ const { getNextUpdateNumber } = require('../utils/updateCounter');
 const pendingRequests = require('../utils/pendingRequests');
 const getSheetsClient = require('../services/googleSheets');
 const { getItems } = require('../utils/itemCache');
+const { addSale } = require('../utils/salesStats');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -191,6 +192,16 @@ module.exports = {
             userId: interaction.user.id,
             transaction
         });
+
+        // If sold, update stats for each item
+        if (transaction === 'Sold') {
+            // Distribute the total among items proportionally, or just add the total to each item
+            // Here, we'll add each item's value (price * qty) to the stats
+            for (const item of details) {
+                const itemTotal = item.price * item.qty;
+                addSale(interaction.user.id, item.name, itemTotal, item.qty);
+            }
+        }
 
         await interaction.editReply({ content: '✅ Bulk order submitted for approval!' });
     },

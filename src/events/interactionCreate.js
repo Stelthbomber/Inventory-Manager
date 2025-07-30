@@ -1,6 +1,7 @@
 const getSheetsClient = require('../services/googleSheets');
 const { EmbedBuilder } = require('discord.js');
 const pendingRequests = require('../utils/pendingRequests');
+const { addSale } = require('../utils/salesStats');
 
 module.exports = {
     name: 'interactionCreate',
@@ -115,6 +116,11 @@ module.exports = {
                         .setColor(0x00ff00)
                         .addFields({ name: '\u200B', value: `✅ **Approved by:** <@${interaction.user.id}>` });
                     await interaction.update({ embeds: [embed], components: [] });
+
+                    // Update sales statistics if it's a sale
+                    if (data.saleType === 'Sold') {
+                        addSale(data.userId, data.itemName, data.amount, data.quantity);
+                    }
                 } catch (err) {
                     console.error('Google Sheets update error:', err);
                     await interaction.reply({ content: '❌ Failed to update Google Sheets.', ephemeral: true });
@@ -214,6 +220,14 @@ module.exports = {
                         .setColor(0x00ff00)
                         .addFields({ name: '\u200B', value: `✅ **Bulk order approved by:** <@${interaction.user.id}>` });
                     await interaction.update({ embeds: [embed], components: [] });
+
+                    // Update sales statistics if it's a sale
+                    if (request.transaction === 'Sold') {
+                        for (const item of request.items) {
+                            const itemTotal = item.price * item.qty;
+                            addSale(request.userId, item.name, itemTotal, item.qty);
+                        }
+                    }
                 } catch (err) {
                     console.error('Bulk order Google Sheets update error:', err);
                     await interaction.reply({ content: '❌ Failed to update Google Sheets for bulk order.', ephemeral: true });

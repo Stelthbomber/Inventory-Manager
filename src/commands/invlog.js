@@ -3,6 +3,7 @@ const { getNextUpdateNumber } = require('../utils/updateCounter');
 const pendingRequests = require('../utils/pendingRequests');
 const getSheetsClient = require('../services/googleSheets');
 const { getItem, getItems } = require('../utils/itemCache');
+const { addSale } = require('../utils/salesStats');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -146,6 +147,11 @@ module.exports = {
         pendingRequests.set(updateNumber, {
             saleType, type, item: itemName, quantity, amount, notes, userId: interaction.user.id
         });
+
+        // If the saleType is 'Sold', call addSale function
+        if (saleType === 'Sold') {
+            addSale(interaction.user.id, itemName, amount, quantity);
+        }
 
         await interaction.editReply(':white_check_mark: Update submitted for approval!');
     },
