@@ -3,6 +3,7 @@
 
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const getSheetsClient = require('../services/googleSheets');
+const { getItem, refreshCache } = require('../utils/itemCache');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -31,6 +32,11 @@ module.exports = {
                 .setDescription('Sale price per unit')
                 .setRequired(true)
                 .setMinValue(0)
+        )
+        .addStringOption(option =>
+            option.setName('unit')
+                .setDescription('Unit type (required for Drugs, e.g. g, oz, pill)')
+                .setRequired(false)
         ),
     async execute(interaction) {
         // Role check using .env role ID
@@ -50,29 +56,32 @@ module.exports = {
             const item = interaction.options.getString('item');
             const stock = interaction.options.getInteger('stock');
             const price = interaction.options.getNumber('price');
+            let unit = interaction.options.getString('unit') || '';
+
+            // Require unit for Drugs
+            if (type === 'Drugs' && !unit) {
+                return await interaction.editReply({
+                    content: '❌ You must specify a unit type for Drugs (e.g. g, oz, pill).'
+                });
+            }
 
             const formattedPrice = `$${price.toLocaleString()}`;
 
             const sheets = await getSheetsClient();
 
-            // Check for duplicate item
-            const existing = await sheets.spreadsheets.values.get({
-                spreadsheetId: process.env.GOOGLE_SHEET_ID,
-                range: 'Data!A2:B',
-            });
-            const rows = existing.data.values || [];
-            if (rows.some(row => row[0] === type && row[1] === item)) {
+            const itemData = await getItem(type, item);
+            if (itemData) {
                 return await interaction.editReply({
                     content: '❌ This item already exists in the inventory.'
                 });
             }
 
-            // Append new row
+            // Append new row (now includes unit column)
             await sheets.spreadsheets.values.append({
                 spreadsheetId: process.env.GOOGLE_SHEET_ID,
-                range: 'Data!A:D',
+                range: 'Data!A:E',
                 valueInputOption: 'USER_ENTERED',
-                resource: { values: [[type, item, stock, price]] },
+                resource: { values: [[type, item, stock, price, unit]] },
             });
 
             await interaction.editReply({
@@ -90,14 +99,18 @@ module.exports = {
                         { name: 'Type', value: type, inline: true },
                         { name: 'Item', value: item, inline: true },
                         { name: 'Stock', value: stock.toString(), inline: true },
-                        { name: 'Price', value: formattedPrice, inline: true }
+                        { name: 'Price', value: formattedPrice, inline: true },
+                        { name: 'Unit', value: unit || 'N/A', inline: true }
                     )
                     .setTimestamp();
                 logChannel.send({
-                    content: `<@${interaction.user.id}>`, // This will actually ping the user
+                    content: `<@${interaction.user.id}>`,
                     embeds: [embed]
                 }).catch(console.error);
             }
+
+            // Refresh the item cache
+            await refreshCache();
         } catch (error) {
             console.error('Error adding item:', error);
             await interaction.editReply({

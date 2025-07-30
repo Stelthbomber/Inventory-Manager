@@ -2,7 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 const { getNextUpdateNumber } = require('../utils/updateCounter');
 const pendingRequests = require('../utils/pendingRequests');
 const getSheetsClient = require('../services/googleSheets');
-const { getItems } = require('../utils/itemCache');
+const { getItem, getItems } = require('../utils/itemCache');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -56,27 +56,54 @@ module.exports = {
         // Gather options
         const saleType = interaction.options.getString('sale_type');
         const type = interaction.options.getString('type');
-        const item = interaction.options.getString('item');
+        const itemName = interaction.options.getString('item');
         const quantity = interaction.options.getInteger('quantity');
         const amount = interaction.options.getNumber('amount');
         const notes = interaction.options.getString('notes');
-
-        // Get and increment update number
         const updateNumber = getNextUpdateNumber();
 
-        pendingRequests.set(updateNumber, { saleType, type, item, quantity, amount, notes, userId: interaction.user.id });
-        console.log('Pending set:', updateNumber, pendingRequests.has(updateNumber));
+        // Fetch price for the item
+        const itemData = await getItem(type, itemName);
+        if (!itemData) {
+            return interaction.editReply({
+                content: `❌ Item "${itemName}" of type "${type}" was not found in inventory.`,
+                ephemeral: true
+            });
+        }
+        const price = itemData.price;
+        const expectedTotal = price * quantity;
+        const unitRaw = itemData.unit || 'N/A';
+        // Pluralize unit if quantity > 1 and unit is not N/A or empty
+        const nonPluralUnits = ['oz', 'L', 'ml', 'l'];
+        let unit = unitRaw;
+        if (
+            quantity > 1 &&
+            unitRaw &&
+            unitRaw !== 'N/A' &&
+            !unitRaw.endsWith('s') &&
+            !nonPluralUnits.includes(unitRaw.toLowerCase())
+        ) {
+            unit = `${unitRaw}s`;
+        }
 
-        // Build embed
+        // Prevent logging if not enough stock, but allow if "Bought"
+        if (saleType === 'Sold' && itemData.stock < quantity) {
+            return interaction.editReply({
+                content: `❌ Not enough stock for **${itemName}**. Available: ${itemData.stock} ${unitRaw}, requested: ${quantity} ${unit}.`,
+                ephemeral: true
+            });
+        }
+
+        const summary = `${itemName} ${quantity} ${unit}`;
+
         const embed = new EmbedBuilder()
             .setTitle('Inventory Update Request')
             .setColor(0x4B0F0F)
             .addFields(
-                { name: 'Type', value: type, inline: true },
-                { name: 'Item', value: item, inline: true },
-                { name: 'Quantity', value: quantity.toString(), inline: true },
+                { name: 'Item', value: summary, inline: false },
                 { name: 'Transaction', value: saleType, inline: true },
                 { name: 'Amount', value: `$${amount.toLocaleString()}`, inline: true },
+                { name: 'Expected Amount', value: `$${expectedTotal.toLocaleString()}`, inline: false },
                 { name: 'Notes', value: notes, inline: false },
                 { name: 'Requested by', value: `<@${interaction.user.id}>`, inline: false }
             )
@@ -84,7 +111,7 @@ module.exports = {
             .setTimestamp();
 
         // Add Approve and Deny buttons with update number in customId
-        const row = new ActionRowBuilder().addComponents(
+        const rowAction = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId(`approve_invupdate:${updateNumber}`)
                 .setLabel('Approve')
@@ -101,41 +128,46 @@ module.exports = {
         if (logChannel && logChannel.isTextBased()) {
             await logChannel.send({
                 embeds: [embed],
-                components: [row]
+                components: [rowAction]
             });
         }
+
+        pendingRequests.set(updateNumber, {
+            saleType, type, item: itemName, quantity, amount, notes, userId: interaction.user.id
+        });
 
         await interaction.editReply(':white_check_mark: Update submitted for approval!');
     },
 
     async autocomplete(interaction) {
-        const focusedOption = interaction.options.getFocused(true);
-        if (focusedOption.name !== 'item') return;
-
-        const type = interaction.options.getString('type');
-        if (!type) {
-            await interaction.respond([]);
-            return;
-        }
-
         try {
-            const items = await getItems(type);
+            const focusedOption = interaction.options.getFocused(true);
+            if (focusedOption.name !== 'item') return;
 
-            let filtered;
-            if (!focusedOption.value) {
-                filtered = items;
-            } else {
-                filtered = items.filter(name =>
-                    name.toLowerCase().includes(focusedOption.value.toLowerCase())
-                );
+            const type = interaction.options.getString('type');
+            if (!type) {
+                await interaction.respond([]);
+                return;
             }
+
+            // Use only cached data here!
+            const itemsObj = await getItems(type, true); // true = fast mode, don't refresh cache
+            const items = Object.keys(itemsObj);
+
+            const filtered = items.filter(name =>
+                name.toLowerCase().includes(focusedOption.value.toLowerCase())
+            );
 
             await interaction.respond(
                 filtered.slice(0, 25).map(name => ({ name, value: name }))
             );
+            return;
         } catch (err) {
             console.error('Autocomplete error (invlog):', err);
-            await interaction.respond([]);
+            try {
+                await interaction.respond([]);
+            } catch {}
+            return;
         }
     },
 };
