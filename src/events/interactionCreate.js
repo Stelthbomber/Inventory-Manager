@@ -176,6 +176,53 @@ module.exports = {
                     .setColor(0xff0000)
                     .addFields({ name: '\u200B', value: `❌ **Denied by:** <@${interaction.user.id}>` });
                 await interaction.update({ embeds: [embed], components: [] });
+            } else if (action === 'approve_bulkorder') {
+                const request = pendingRequests.get(Number(updateNumber));
+                if (!request) {
+                    await interaction.reply({ content: '❌ Could not find the bulk order details.', ephemeral: true });
+                    return;
+                }
+                try {
+                    const sheets = await getSheetsClient();
+                    const itemsRes = await sheets.spreadsheets.values.get({
+                        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+                        range: 'Data!A2:E',
+                    });
+                    const rows = itemsRes.data.values || [];
+
+                    // For each item, update the stock in the sheet
+                    for (const item of request.items) {
+                        const rowIndex = rows.findIndex(r => r[0] === item.type && r[1] === item.name);
+                        if (rowIndex === -1) continue;
+                        let newStock = item.stock;
+                        if (request.transaction === 'Sold') {
+                            newStock -= item.qty;
+                        } else {
+                            newStock += item.qty;
+                        }
+                        // Sheet rows start at 2 (A2), so add 2 to rowIndex
+                        await sheets.spreadsheets.values.update({
+                            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+                            range: `Data!C${rowIndex + 2}`,
+                            valueInputOption: 'USER_ENTERED',
+                            resource: { values: [[newStock]] },
+                        });
+                    }
+
+                    // Update the embed
+                    const embed = EmbedBuilder.from(interaction.message.embeds[0])
+                        .setColor(0x00ff00)
+                        .addFields({ name: '\u200B', value: `✅ **Bulk order approved by:** <@${interaction.user.id}>` });
+                    await interaction.update({ embeds: [embed], components: [] });
+                } catch (err) {
+                    console.error('Bulk order Google Sheets update error:', err);
+                    await interaction.reply({ content: '❌ Failed to update Google Sheets for bulk order.', ephemeral: true });
+                }
+            } else if (action === 'deny_bulkorder') {
+                const embed = EmbedBuilder.from(interaction.message.embeds[0])
+                    .setColor(0xff0000)
+                    .addFields({ name: '\u200B', value: `❌ **Bulk order denied by:** <@${interaction.user.id}>` });
+                await interaction.update({ embeds: [embed], components: [] });
             }
 
             // Remove from pending
