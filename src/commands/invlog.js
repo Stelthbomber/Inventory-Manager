@@ -63,21 +63,28 @@ module.exports = {
         const updateNumber = getNextUpdateNumber();
 
         // Fetch price for the item
-        const itemData = await getItem(type, itemName);
-        if (!itemData) {
+        const sheets = await getSheetsClient();
+        const itemsRes = await sheets.spreadsheets.values.get({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            range: 'Data!A2:E',
+        });
+        const rows = itemsRes.data.values || [];
+        const itemRow = rows.find(row => row[0] === type && row[1] === itemName);
+        if (!itemRow) {
             return interaction.editReply({
                 content: `❌ Item "${itemName}" of type "${type}" was not found in inventory.`,
                 ephemeral: true
             });
         }
-        const price = itemData.price;
-        const expectedTotal = price * quantity;
-        const unitRaw = itemData.unit || 'N/A';
+        const stock = parseInt(itemRow[2], 10);
+        const price = parseFloat(itemRow[3]);
+        const unitRaw = itemRow[4] || 'N/A';
+
         // Pluralize unit if quantity > 1 and unit is not N/A or empty
         const nonPluralUnits = ['oz', 'L', 'ml', 'l'];
         let unit = unitRaw;
         if (
-            quantity > 1 &&
+            quantity > 2 &&
             unitRaw &&
             unitRaw !== 'N/A' &&
             !unitRaw.endsWith('s') &&
@@ -87,13 +94,14 @@ module.exports = {
         }
 
         // Prevent logging if not enough stock, but allow if "Bought"
-        if (saleType === 'Sold' && itemData.stock < quantity) {
+        if (saleType === 'Sold' && stock < quantity) {
             return interaction.editReply({
-                content: `❌ Not enough stock for **${itemName}**. Available: ${itemData.stock} ${unitRaw}, requested: ${quantity} ${unit}.`,
+                content: `❌ Not enough stock for **${itemName}**. Available: ${stock} ${unitRaw}, requested: ${quantity} ${unit}.`,
                 ephemeral: true
             });
         }
 
+        const expectedTotal = price * quantity;
         const summary = `${itemName} ${quantity} ${unit}`;
 
         const embed = new EmbedBuilder()
@@ -104,6 +112,9 @@ module.exports = {
                 { name: 'Transaction', value: saleType, inline: true },
                 { name: 'Amount', value: `$${amount.toLocaleString()}`, inline: true },
                 { name: 'Expected Amount', value: `$${expectedTotal.toLocaleString()}`, inline: false },
+                { name: 'Stock After', value: saleType === 'Sold'
+                    ? `${stock - quantity} ${unit}`
+                    : `${stock + quantity} ${unit}`, inline: false },
                 { name: 'Notes', value: notes, inline: false },
                 { name: 'Requested by', value: `<@${interaction.user.id}>`, inline: false }
             )
