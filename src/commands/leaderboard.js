@@ -4,6 +4,10 @@ const { postLeaderboard } = require('../jobs/leaderboardPoster');
 
 const LEADERBOARD_CHANNEL_ID = '1400077734985732136';
 
+// Simple in-memory cooldown map (userId -> timestamp)
+const reloadCooldown = new Map();
+const RELOAD_COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('leaderboard')
@@ -18,7 +22,7 @@ module.exports = {
         ),
     async execute(interaction) {
         if (interaction.options.getSubcommand() === 'show') {
-            await interaction.deferReply();
+            await interaction.deferReply({ ephemeral: true }); // Make reply ephemeral
             const leaderboard = getLeaderboard(10);
 
             let desc = '### 💰 **Top Earners — Sellers Leaderboard**\n\n';
@@ -44,10 +48,27 @@ module.exports = {
 
             await interaction.editReply({ embeds: [embed] });
         } else if (interaction.options.getSubcommand() === 'reload') {
+            const userId = interaction.user.id;
+            const now = Date.now();
+            const lastUsed = reloadCooldown.get(userId) || 0;
+
+            // Allow users with the Command role to bypass cooldown
+            const COMMAND_ROLE_ID = process.env.STOCKPING_COMMAND_ROLE;
+            const hasCommandRole = interaction.member.roles.cache.has(COMMAND_ROLE_ID);
+
+            if (!hasCommandRole && now - lastUsed < RELOAD_COOLDOWN_MS) {
+                const nextAvailable = Math.floor((lastUsed + RELOAD_COOLDOWN_MS) / 1000); // Discord timestamp is in seconds
+                return await interaction.reply({
+                    content: `⏳ You can use \`/leaderboard reload\` again <t:${nextAvailable}:R>.`,
+                    ephemeral: true
+                });
+            }
+
+            reloadCooldown.set(userId, now);
+
             await interaction.deferReply({ ephemeral: true });
 
             try {
-                // This will post the leaderboard in the designated channel
                 const result = await postLeaderboard(LEADERBOARD_CHANNEL_ID, interaction.client);
 
                 if (result) {
@@ -56,7 +77,6 @@ module.exports = {
                     await interaction.editReply('Failed to reload the leaderboard. Please try again later.');
                 }
             } catch (err) {
-                // Only reply if not already replied
                 if (!interaction.replied && !interaction.deferred) {
                     await interaction.reply({ content: 'There was an error!', ephemeral: true });
                 }
