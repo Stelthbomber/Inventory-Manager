@@ -6,21 +6,9 @@ const { getItems } = require('../utils/itemCache');
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('bulkorder')
-        .setDescription('Submit a bulk inventory order for approval.')
+        .setName('bulklog')
+        .setDescription('Submit a bulk inventory log for approval.')
         // Required options first
-        .addStringOption(option =>
-            option.setName('item1')
-                .setDescription('First item name')
-                .setRequired(true)
-                .setAutocomplete(true)
-        )
-        .addIntegerOption(option =>
-            option.setName('quantity1')
-                .setDescription('Quantity for first item')
-                .setRequired(true)
-                .setMinValue(1)
-        )
         .addStringOption(option =>
             option.setName('transaction')
                 .setDescription('Transaction type')
@@ -42,6 +30,16 @@ module.exports = {
                 .setMinValue(0)
         )
         // Optional items/quantities after required
+                .addStringOption(option =>
+            option.setName('item1')
+                .setDescription('First item name')
+                .setAutocomplete(true)
+        )
+        .addIntegerOption(option =>
+            option.setName('quantity1')
+                .setDescription('Quantity for first item')
+                .setMinValue(1)
+        )
         .addStringOption(option =>
             option.setName('item2')
                 .setDescription('Second item name')
